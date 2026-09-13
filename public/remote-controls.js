@@ -8,6 +8,12 @@
     if(recent&&!document.querySelector('#remoteNow'))recent.insertAdjacentHTML('beforebegin','<div id="remoteNow" class="remote-now"></div>');
     const jobs=document.querySelector('#jobs');
     if(jobs&&!document.querySelector('#remoteJobActions'))jobs.insertAdjacentHTML('beforebegin','<div id="remoteJobActions" class="remote-actions"></div>');
+    const channelCard=document.querySelector('#page-channels .card');
+    if(channelCard&&!document.querySelector('#oauthFeedback')){
+      const head=channelCard.querySelector('.head');
+      const box=document.createElement('div'); box.id='oauthFeedback'; box.style.display='none'; box.style.margin='14px 0'; box.style.padding='14px 16px'; box.style.borderRadius='14px'; box.style.lineHeight='1.45';
+      head?.insertAdjacentElement('afterend',box);
+    }
   }
   function actionButton(label,id,kind='cancel'){
     const cls=kind==='stop'?'danger':'ghost';
@@ -27,5 +33,42 @@
     document.querySelectorAll('.remote-act').forEach(btn=>btn.onclick=async()=>{btn.disabled=true;try{if(btn.dataset.kind==='retry')await req(`/api/jobs/${encodeURIComponent(btn.dataset.id)}/retry`,{method:'POST'});else await req(`/api/jobs/${encodeURIComponent(btn.dataset.id)}/cancel`,{method:'POST'});await update();}catch(e){alert(e.message)}finally{btn.disabled=false;}});
   }
   async function update(){try{const s=await req('/api/status');render(s);}catch(e){/* panel login/offline: main UI handles it */}}
-  window.addEventListener('DOMContentLoaded',()=>{ensureUi();setTimeout(update,1200);setInterval(update,5000);});
+
+  function oauthFriendly(raw){
+    const m=String(raw||'');
+    if(/suspended/i.test(m))return {title:'Kanal ulanmagan',text:'Tanlangan YouTube kanal suspended/bloklangan. Bu kanalni API orqali ulab bo‘lmaydi. “+ Kanal ulash”ni qayta bosing va faol (bloklanmagan) YouTube kanal joylashgan Google/Brand Accountni tanlang.'};
+    if(/invalid_grant|token has been expired|revoked/i.test(m))return {title:'Google ruxsati eskirgan',text:'Google ruxsati bekor qilingan yoki muddati tugagan. Kanalni qayta ulang.'};
+    if(/access_denied/i.test(m))return {title:'Ruxsat berilmadi',text:'Google ruxsati yakunlanmagan. Test user/Google Auth Platform sozlamalarini tekshiring va qayta urinib ko‘ring.'};
+    if(/redirect_uri_mismatch/i.test(m))return {title:'OAuth callback noto‘g‘ri',text:'Google Cloud OAuth redirect URI Render callback bilan mos emas.'};
+    if(/quota|rate.?limit/i.test(m))return {title:'YouTube API limiti',text:'YouTube API quota/limitga urildi. Keyinroq qayta urinib ko‘ring.'};
+    if(/YouTube kanal topilmadi|youtubeSignupRequired/i.test(m))return {title:'YouTube kanal topilmadi',text:'Tanlangan Google hisobida faol YouTube kanal yo‘q. Avval YouTube kanal yarating yoki boshqa hisobni tanlang.'};
+    return {title:'Kanal ulashda xato',text:m||'Noma’lum OAuth xatosi.'};
+  }
+  function showOauthBox(ok,title,text){
+    ensureUi(); const box=document.querySelector('#oauthFeedback'); if(!box)return;
+    box.style.display='block'; box.style.border=`1px solid ${ok?'#1f9d75':'#c74762'}`; box.style.background=ok?'rgba(31,157,117,.12)':'rgba(199,71,98,.12)'; box.style.color=ok?'#bff5df':'#ffd0da';
+    box.innerHTML=`<b style="display:block;margin-bottom:5px">${esc(title)}</b><span>${esc(text)}</span>`;
+  }
+  async function handleOauthReturn(){
+    ensureUi();
+    const q=new URLSearchParams(location.search),oauth=q.get('oauth'),message=q.get('message');
+    const pending=Number(localStorage.getItem('automix_oauth_pending')||0);
+    const recent=pending&&Date.now()-pending<20*60*1000;
+    if(oauth==='error'){
+      try{if(typeof nav==='function')nav('channels')}catch{}
+      const f=oauthFriendly(message);showOauthBox(false,f.title,f.text);localStorage.removeItem('automix_oauth_pending');
+      history.replaceState({},'',location.pathname+'#channels');return;
+    }
+    if(recent&&location.hash.includes('channels')){
+      try{
+        const s=await req('/api/status');
+        if(s.channels?.length){const last=[...s.channels].sort((a,b)=>Date.parse(b.oauthConnectedAt||b.updatedAt||0)-Date.parse(a.oauthConnectedAt||a.updatedAt||0))[0];showOauthBox(true,'Kanal ulandi ✅',last?.title?`${last.title} saqlandi. Kanal ro‘yxati va Analytics endi shu OAuth token bilan ishlaydi.`:'Google OAuth muvaffaqiyatli yakunlandi.');}
+        else showOauthBox(false,'Kanal saqlanmadi','Google oynasidan qaytildi, lekin serverda kanal paydo bo‘lmadi. “+ Kanal ulash”ni qayta bosing va boshqa faol YouTube kanalni tanlang.');
+        try{if(typeof refresh==='function')await refresh()}catch{}
+      }catch(e){showOauthBox(false,'Kanal holatini tekshirib bo‘lmadi',e.message)}
+      localStorage.removeItem('automix_oauth_pending');
+    }
+  }
+  document.addEventListener('click',e=>{const a=e.target.closest?.('a[href="/auth/google"]');if(a)localStorage.setItem('automix_oauth_pending',String(Date.now()));});
+  window.addEventListener('DOMContentLoaded',()=>{ensureUi();setTimeout(update,1200);setInterval(update,5000);setTimeout(handleOauthReturn,300);});
 })();
