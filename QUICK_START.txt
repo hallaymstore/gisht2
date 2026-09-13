@@ -1,0 +1,23 @@
+AutoMix YouTube AI v1.1 — QUICK START
+
+WINDOWS PC:
+1) INSTALL.bat
+2) .env ichida Google OAuth va ixtiyoriy Gemini API key kiriting
+3) START.bat
+4) http://localhost:3939
+
+TELEFON — BIR XIL WIFI:
+1) .env: PANEL_PASSWORD=kuchli_parol
+2) START_LAN_PHONE.bat
+3) PC dashboard'da ko'rsatilgan http://192.168.x.x:3939 manzilni telefonda oching
+4) Parol bilan kiring
+5) Chrome → Install app / Add to Home screen
+
+ELEKTR/INTERNET UZILSA:
+- tarix data/state.json + state.json.bak da qoladi
+- interrupted job restartda recovery qilinadi
+- scheduler missed-slot siyosati: catch-up / next-only / skip-missed
+- aniq vaqtga qo'yilgan scheduled job restartdan keyin ham qoladi
+
+HAR JOYDAN INTERNET ORQALI:
+MOBILE_REMOTE_UZ.md ni o'qing. HTTPS domen/VPS/reverse proxy tavsiya qilinadi.

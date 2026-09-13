@@ -1,0 +1,7 @@
+node_modules/
+.env
+data/state.json
+data/*.tmp
+storage/output/*.mp4
+storage/temp/*
+npm-debug.log*
