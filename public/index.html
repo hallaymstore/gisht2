@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="uz">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#07111f" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <title>AutoMix YouTube AI</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="brand">AutoMix YouTube AI</div>
+      <div class="sub">Video tayyorlash → AI metadata → YouTube upload → 24/7 scheduler</div>
+    </div>
+    <div class="top-actions">
+      <span id="serverDot" class="dot"></span><span id="serverText">Ulanmoqda…</span>
+      <span id="serverClock" class="clock-chip">--:--:--</span>
+      <button class="ghost hidden" id="installBtn">📲 O‘rnatish</button>
+      <button class="ghost" id="refreshBtn">Yangilash</button>
+      <button class="ghost hidden" id="logoutBtn">Chiqish</button>
+    </div>
+  </header>
+
+  <section id="loginScreen" class="login-screen hidden">
+    <div class="login-card">
+      <div class="brand big">AutoMix YouTube AI</div>
+      <p>Masofaviy panel himoyalangan. Panel parolini kiriting.</p>
+      <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Panel paroli" />
+      <button id="loginBtn">Kirish</button>
+      <div id="loginError" class="bad-text"></div>
+    </div>
+  </section>
+
+  <main class="wrap" id="appMain">
+    <section id="notice" class="notice hidden"></section>
+    <section class="stats" id="stats"></section>
+
+    <section class="grid two">
+      <article class="card">
+        <div class="card-head">
+          <div><h2>1. Media sozlamalari</h2><p>5–10 soniyalik kliplar va musiqalar papkasi.</p></div>
+          <button id="scanBtn" class="secondary">Skanerlash</button>
+        </div>
+        <div class="form-grid">
+          <label class="wide">Video bo‘laklar papkasi
+            <div class="inline"><input id="clipDir" placeholder="C:\Videos\Clips"/><button data-pick="clipDir">Tanlash</button></div>
+          </label>
+          <label class="wide">Musiqalar papkasi
+            <div class="inline"><input id="musicDir" placeholder="C:\Music"/><button data-pick="musicDir">Tanlash</button></div>
+          </label>
+          <label class="wide">Tayyor video papkasi
+            <div class="inline"><input id="outputDir" placeholder="C:\Videos\Output"/><button data-pick="outputDir">Tanlash</button></div>
+          </label>
+          <label class="wide">Thumbnail papkasi (ixtiyoriy)
+            <div class="inline"><input id="thumbnailDir" placeholder="C:\Thumbs"/><button data-pick="thumbnailDir">Tanlash</button></div>
+          </label>
+          <label>Klip soniyasi<input id="clipSeconds" type="number" min="1" max="30"/></label>
+          <label>Sifat<select id="quality"><option value="fast">Tez</option><option value="balanced">Balans</option><option value="high">Yuqori</option></select></label>
+          <label>Format<select id="aspect"><option value="landscape">16:9</option><option value="portrait">9:16</option><option value="square">1:1</option></select></label>
+          <label>Resolution<select id="resolution"><option value="720">720p</option><option value="1080">1080p</option></select></label>
+          <label>Musiqa tartibi<select id="songMode"><option value="ordered">Ketma-ket</option><option value="random">Tasodifiy</option></select></label>
+          <label>Parallel segment<input id="parallelSegments" type="number" min="1" max="4"/></label>
+          <label><span>Render faylini saqlash</span><input id="keepRendered" type="checkbox"/></label>
+        </div>
+        <div class="footer-actions"><button id="saveSettingsBtn">Sozlamani saqlash</button><span id="scanResult" class="muted"></span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <div><h2>2. AI metadata</h2><p>Title, description va tags avtomatik.</p></div>
+          <button id="aiTestBtn" class="secondary">AI test</button>
+        </div>
+        <div class="form-grid">
+          <label>Provider<select id="aiProvider"><option value="gemini">Gemini API</option><option value="ollama">Ollama Local</option><option value="template">AI siz — template</option></select></label>
+          <label>Til<input id="aiLanguage" value="English"/></label>
+        </div>
+        <div class="info-list" id="aiInfo"></div>
+        <div class="actions-row">
+          <a class="btnlink" target="_blank" rel="noreferrer" href="https://aistudio.google.com/app/apikey">Gemini API key olish</a>
+          <a class="btnlink secondary-link" target="_blank" rel="noreferrer" href="https://ollama.com/">Ollama</a>
+        </div>
+        <pre id="aiResult" class="console small">AI test natijasi shu yerda chiqadi.</pre>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <div><h2>3. YouTube kanallar</h2><p>Har kanal Google OAuth orqali alohida ulanadi. Parol saqlanmaydi.</p></div>
+        <a class="button" href="/auth/google">+ YouTube kanal ulash</a>
+      </div>
+      <div id="channels" class="channels empty">Kanal hali ulanmagan.</div>
+    </section>
+
+    <section class="grid two">
+      <article class="card">
+        <div class="card-head"><div><h2>4. Scheduler</h2><p>Default: har kanalga kuniga 1 video, kanallar soatlab ketma-ket.</p></div><span id="schedBadge" class="badge">OFF</span></div>
+        <div class="form-grid">
+          <label><span>Scheduler yoqilgan</span><input id="schedulerEnabled" type="checkbox"/></label>
+          <label>Rejim<select id="schedulerMode"><option value="once-per-channel-daily">Har kanalga kuniga 1</option><option value="continuous-hourly">Har intervalda aylana</option></select></label>
+          <label>Boshlanish soati<input id="startHour" type="number" min="0" max="23"/></label>
+          <label>Boshlanish minuti<input id="startMinute" type="number" min="0" max="59"/></label>
+          <label>Interval (minut)<input id="intervalMinutes" type="number" min="15" max="1440"/></label>
+          <label>Timezone<input id="timezone"/></label>
+          <label>Tok/internetdan keyingi tiklash
+            <select id="recoveryMode">
+              <option value="catch-up-today">Bugungi qolganlarini ketma-ket bajar</option>
+              <option value="next-only">Faqat eng keyingi qolganini bajar</option>
+              <option value="skip-missed">O‘tib ketgan vaqtlarni tashlab ket</option>
+            </select>
+          </label>
+          <label>Tiklash oralig‘i (min)<input id="recoverySpacingMinutes" type="number" min="1" max="180"/></label>
+          <label>Bir kunda max tiklash<input id="maxCatchUp" type="number" min="1" max="24"/></label>
+          <label><span>Uzilgan render/uploadni davom ettirish</span><input id="resumeInterrupted" type="checkbox"/></label>
+        </div>
+        <div class="footer-actions"><button id="saveSchedulerBtn">Scheduler saqlash</button><button id="runNextBtn" class="secondary">Keyingisini hozir ishga tushir</button></div>
+        <div class="hint">24 kanal + 60 minut interval = 24 soatda 24 kanalga bittadan video. Tok/internet uzilib qaytsa, tanlangan tiklash qoidasi va oldingi tarix asosida davom etadi.</div>
+        <div id="schedulerInfo" class="info-list"></div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><div><h2>5. Tez boshqaruv</h2><p>Qo‘lda bitta kanalni render + upload qilish.</p></div></div>
+        <label>Kanal<select id="manualChannel"></select></label>
+        <div class="big-action"><button id="runManualBtn">🎬 Video tayyorla va YouTube’ga yukla</button></div>
+        <div class="plan-box">
+          <h3>🗓 Aniq vaqtga rejalashtirish</h3>
+          <label>Kanal<select id="scheduleChannel"></select></label>
+          <label>Vaqt (scheduler timezone bo‘yicha)<input id="scheduledLocal" type="datetime-local"/></label>
+          <button id="scheduleBtn" class="full">Rejaga qo‘shish</button>
+          <div class="muted">Ilova/server o‘sha vaqtda o‘chiq bo‘lsa, qayta yoqilganda overdue reja avtomatik navbatga o‘tadi.</div>
+        </div>
+        <div id="doctor" class="doctor"></div>
+        <button id="doctorBtn" class="secondary full">Tizimni tekshirish</button>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><div><h2>Job navbati</h2><p>Render, AI va upload holati.</p></div></div>
+      <div id="jobs" class="table-wrap"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><div><h2>Loglar</h2><p>Oxirgi 100 hodisa.</p></div></div>
+      <pre id="logs" class="console">Loglar yuklanmoqda…</pre>
+    </section>
+  </main>
+
+  <template id="channelTemplate">
+    <div class="channel-card">
+      <div class="channel-main">
+        <img class="avatar"/>
+        <div class="channel-ident"><strong class="channel-title"></strong><span class="channel-handle"></span><span class="channel-stat"></span></div>
+        <label class="switch-label">Faol <input class="channel-enabled" type="checkbox"/></label>
+      </div>
+      <div class="channel-settings">
+        <label>Tartib<input class="channel-order" type="number" min="0"/></label>
+        <label>Privacy<select class="channel-privacy"><option value="private">Private</option><option value="unlisted">Unlisted</option><option value="public">Public</option></select></label>
+        <label>Kunlik max<input class="channel-daily" type="number" min="1" max="24"/></label>
+        <label>Category ID<input class="channel-category"/></label>
+        <label class="wide">Title template<input class="channel-title-template"/></label>
+        <label class="wide">Description template<textarea class="channel-desc-template" rows="3"></textarea></label>
+        <label class="wide">Tags (vergul bilan)<input class="channel-tags"/></label>
+      </div>
+      <div class="footer-actions"><button class="save-channel">Saqlash</button><button class="refresh-channel secondary">Statistika</button><button class="remove-channel danger">Uzish</button></div>
+    </div>
+  </template>
+
+  <script src="/app.js"></script>
+</body>
+</html>

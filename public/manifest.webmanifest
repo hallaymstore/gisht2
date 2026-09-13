@@ -1,0 +1,14 @@
+{
+  "name": "AutoMix YouTube AI",
+  "short_name": "AutoMix AI",
+  "description": "Mobile PWA panel for AutoMix video rendering, scheduling and YouTube upload",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#07111f",
+  "theme_color": "#07111f",
+  "orientation": "any",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
