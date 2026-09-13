@@ -1,7 +1,10 @@
 (()=>{
   const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
   async function req(url,opt={}){const r=await fetch(url,{credentials:'same-origin',headers:{'content-type':'application/json'},...opt,body:opt.body&&typeof opt.body!=='string'?JSON.stringify(opt.body):opt.body});const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.error||`HTTP ${r.status}`);return b;}
+  function isOnline(a){return a&&Date.now()-Date.parse(a.lastSeenAt||0)<120000}
   function ensureUi(){
+    const stats=document.querySelector('#stats');
+    if(stats&&!document.querySelector('#remoteQuickAction'))stats.insertAdjacentHTML('afterend','<div id="remoteQuickAction"></div>');
     const agent=document.querySelector('#agentDetails');
     if(agent&&!document.querySelector('#remotePaths'))agent.insertAdjacentHTML('afterend','<div id="remotePaths" class="remote-extra"></div>');
     const recent=document.querySelector('#recentCommands');
@@ -19,8 +22,16 @@
     const cls=kind==='stop'?'danger':'ghost';
     return `<button class="${cls} remote-act" data-kind="${kind}" data-id="${esc(id)}">${label}</button>`;
   }
+  function renderQuick(s){
+    const box=document.querySelector('#remoteQuickAction');if(!box)return;
+    const a=s.agents?.[0],online=isOnline(a),channels=(s.channels||[]).filter(c=>c.enabled!==false);
+    const old=document.querySelector('#remoteLaunchChannel')?.value||'';
+    const opts=channels.map(c=>`<option value="${esc(c.channelId)}"${c.channelId===old?' selected':''}>${esc(c.title)}</option>`).join('');
+    box.innerHTML=`<article class="card remote-launch"><div class="head"><div><h2>▶ Video tayyorlash</h2><p>Telefondan buyruq bering. Video PC’dagi papkalardan tayyorlanadi.</p></div><span class="badge ${online?'on':''}">${online?'PC ONLINE':'PC OFFLINE'}</span></div><div class="form-grid"><label>Kanal<select id="remoteLaunchChannel" ${channels.length?'':'disabled'}>${opts||'<option>Kanal ulanmagan</option>'}</select></label><div style="align-self:end"><button id="remoteLaunchBtn" class="full" ${channels.length?'':'disabled'}>▶ Video tayyorla va YouTube’ga joyla</button></div></div><div class="${online?'good':'recommend info'}">${online?'Buyruq darhol Local Agent’ga boradi.':'PC hozir o‘chiq/offline. Buyruq cloud navbatida saqlanadi va Local Agent qayta ishga tushganda avtomatik boshlanadi.'}</div></article>`;
+    const btn=document.querySelector('#remoteLaunchBtn');if(btn)btn.onclick=async()=>{btn.disabled=true;const channelId=document.querySelector('#remoteLaunchChannel')?.value;try{await req('/api/jobs/enqueue',{method:'POST',body:{channelId}});alert(online?'Buyruq PC’ga yuborildi ✅':'Buyruq navbatga saqlandi ✅ PC yoqilganda avtomatik boshlanadi.');await update();}catch(e){alert(e.message)}finally{btn.disabled=false}};
+  }
   function render(s){
-    ensureUi();
+    ensureUi();renderQuick(s);
     const a=s.agents?.[0];
     const p=document.querySelector('#remotePaths');
     if(p)p.innerHTML=a?`<div class="info-row"><span>Video bo‘laklar</span><b>${esc(a.clipDir||'Tanlanmagan')}</b></div><div class="info-row"><span>Musiqalar</span><b>${esc(a.musicDir||'Tanlanmagan')}</b></div><div class="info-row"><span>Tayyor video</span><b>${esc(a.outputDir||'Tanlanmagan')}</b></div><div class="info-row"><span>Thumbnail</span><b>${esc(a.thumbnailDir||'Ixtiyoriy')}</b></div>`:'<p class="hint">PC Agent hali ulanmagan.</p>';
