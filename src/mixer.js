@@ -19,10 +19,8 @@ async function buildDurationPlan({clips,targetDuration,segmentsDir,signal,trackC
     if(!info.hasVideo||!Number.isFinite(info.duration)||info.duration<=.08){bad++;if(bad>=clips.length*3)throw new Error('Yaroqli video bo‘lak topilmadi');continue;}
     const seconds=Math.min(info.duration,remaining);
     if(seconds<=.04)break;
-    const maxStart=Math.max(0,info.duration-seconds-.03);
-    const startAt=maxStart>.25?Math.random()*maxStart:0;
     const index=plan.length;
-    plan.push({source,destination:path.join(segmentsDir,`${String(index).padStart(5,'0')}.ts`),startAt,seconds,sourceDuration:info.duration});
+    plan.push({source,destination:path.join(segmentsDir,`${String(index).padStart(5,'0')}.ts`),startAt:0,seconds,sourceDuration:info.duration});
     remaining=Math.max(0,remaining-seconds);previous=source;
   }
   if(!plan.length)throw new Error('Video reja tuzilmadi');
@@ -49,7 +47,7 @@ async function renderOne({settings,state,onProgress=()=>{},log=()=>{},signal,tra
     const outputName=`${safeName(stripExtension(song))}_${new Date().toISOString().replace(/[:.]/g,'-')}_${id('mix').slice(-8)}.mp4`;const outputFile=path.join(settings.outputDir,outputName);
     await muxSegments({listFile,audioFile:song,outputFile,duration:audioInfo.duration,signal,trackChild,onProgress:p=>onProgress(75+Math.round(p*25),'mux')});
     onProgress(100,'done');
-    return{outputFile,songFile:song,songName:stripExtension(song),duration:audioInfo.duration,clipCount:count,sourceClips:plan.map(x=>({name:path.basename(x.source),sourceDuration:x.sourceDuration,usedSeconds:x.seconds,startAt:x.startAt}))};
+    return{outputFile,songFile:song,songName:stripExtension(song),duration:audioInfo.duration,clipCount:count,sourceClips:plan.map(x=>({name:path.basename(x.source),sourceDuration:x.sourceDuration,usedSeconds:x.seconds,startAt:0}))};
   }finally{await fsp.rm(workDir,{recursive:true,force:true}).catch(()=>{});}
 }
 
