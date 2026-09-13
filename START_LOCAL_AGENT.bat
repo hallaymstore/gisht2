@@ -15,7 +15,7 @@ if not exist "node_modules" (
 )
 
 rem Brauzerni faqat Local Agent porti haqiqatan tayyor bo'lgandan keyin ochadi.
-start "" powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "$u='http://127.0.0.1:3940/healthz'; for($i=0;$i -lt 120;$i++){ try { $r=Invoke-WebRequest -UseBasicParsing -Uri $u -TimeoutSec 1; if($r.StatusCode -eq 200){ Start-Process 'http://127.0.0.1:3940'; exit 0 } } catch {}; Start-Sleep -Milliseconds 500 }; Start-Process 'http://127.0.0.1:3940'"
+start "" powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "$u='http://127.0.0.1:3940/'; for($i=0;$i -lt 120;$i++){ try { $r=Invoke-WebRequest -UseBasicParsing -Uri $u -TimeoutSec 1; if($r.StatusCode -eq 200){ Start-Process 'http://127.0.0.1:3940'; exit 0 } } catch {}; Start-Sleep -Milliseconds 500 }; Start-Process 'http://127.0.0.1:3940'"
 
 echo ==============================================
 echo   AutoMix Local Agent ishga tushmoqda...
