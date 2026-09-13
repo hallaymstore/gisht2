@@ -1,109 +1,52 @@
 require('dotenv').config();
-const path = require('path');
-const express = require('express');
-const helmet = require('helmet');
-const compression = require('compression');
-const fs = require('fs');
-const os = require('os');
-const { getState, updateSettings, patchChannel, removeChannel, addLog } = require('./src/store');
-const { createAuthUrl, handleCallback, refreshChannel } = require('./src/youtube');
-const { JobQueue } = require('./src/queue');
-const { Scheduler } = require('./src/scheduler');
-const { scanFiles, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, ffmpegPath, ffprobePath } = require('./src/media');
-const { pickFolder } = require('./src/folder-picker');
-const { geminiMetadata, ollamaMetadata, templateMetadata } = require('./src/ai');
-const { localDateTimeKey, localDisplay } = require('./src/utils');
-const panelAuth = require('./src/auth');
+const path=require('path');const express=require('express');const helmet=require('helmet');const compression=require('compression');const fs=require('fs');const os=require('os');
+const{getState,updateSettings,patchChannel,removeChannel,addLog}=require('./src/store');
+const{createAuthUrl,handleCallback,refreshChannel,issueAgentAccessToken}=require('./src/youtube');
+const{JobQueue}=require('./src/queue');const{Scheduler}=require('./src/scheduler');const{scanFiles,VIDEO_EXTENSIONS,AUDIO_EXTENSIONS,ffmpegPath,ffprobePath}=require('./src/media');const{pickFolder}=require('./src/folder-picker');
+const{generateMetadata,geminiMetadata,ollamaMetadata,templateMetadata}=require('./src/ai');const{localDateTimeKey,localDisplay}=require('./src/utils');const panelAuth=require('./src/auth');
+const analytics=require('./src/analytics');const agentCloud=require('./src/agent-cloud');
 
-const app = express();
-const PORT = Number(process.env.PORT || 3939);
-const HOST = process.env.HOST || '127.0.0.1';
-const STARTED_AT = new Date();
-const queue = new JobQueue();
-const scheduler = new Scheduler(queue);
+const app=express();const PORT=Number(process.env.PORT||3939);const HOST=process.env.HOST||'127.0.0.1';const STARTED_AT=new Date();const CLOUD_MODE=process.env.CLOUD_MODE==='1';
+class CloudAgentQueue{async promoteScheduled(){return null;}async recoverStartup(){return 0;}kick(){}snapshot(){return{running:false,currentJobId:null,mode:'local-agent'};}async enqueue(channelId,trigger='manual',extra={}){return agentCloud.createCommand({channelId,source:trigger,scheduledLocal:extra.scheduledLocal||''});}}
+const queue=CLOUD_MODE?new CloudAgentQueue():new JobQueue();const scheduler=new Scheduler(queue);
 
-app.set('trust proxy', process.env.TRUST_PROXY === '1' ? 1 : false);
-app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: false }));
-app.use(compression());
-app.use(express.json({ limit: '1mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.set('trust proxy',process.env.TRUST_PROXY==='1'?1:false);app.use(helmet({contentSecurityPolicy:false,crossOriginResourcePolicy:false}));app.use(compression());app.use(express.json({limit:'2mb'}));app.use(express.static(path.join(__dirname,'public')));
+app.get('/healthz',(_req,res)=>res.status(200).send('ok'));
+app.get('/api/session',(req,res)=>res.json({authenticated:panelAuth.isAuthenticated(req),authRequired:panelAuth.enabled()}));app.post('/api/login',panelAuth.login);app.post('/api/logout',(req,res)=>{panelAuth.clearCookie(res,req);res.json({ok:true});});
 
-app.get('/healthz', (_req, res) => res.status(200).send('ok'));
+/* Local device agent API: large media never passes through Render. */
+app.use('/worker',agentCloud.verify);
+app.post('/worker/heartbeat',async(req,res)=>{try{res.json(await agentCloud.heartbeat(req.body||{}));}catch(e){res.status(400).json({error:e.message});}});
+app.post('/worker/claim',async(req,res)=>{try{res.json({command:await agentCloud.claim(String(req.body?.deviceId||''))});}catch(e){res.status(400).json({error:e.message});}});
+app.post('/worker/report/:id',async(req,res)=>{try{res.json(await agentCloud.report(req.params.id,req.body||{}));}catch(e){res.status(400).json({error:e.message});}});
+app.get('/worker/config',async(_req,res)=>{try{const s=await getState();res.json({settings:{...s.settings,clipDir:'',musicDir:'',outputDir:'',thumbnailDir:''},channels:s.channels.map(({oauthEncrypted,...c})=>({...c,connected:Boolean(oauthEncrypted)})),time:{serverUtc:new Date().toISOString(),timezone:s.settings.timezone}});}catch(e){res.status(400).json({error:e.message});}});
+app.get('/worker/token/:id',async(req,res)=>{try{res.json(await issueAgentAccessToken(req.params.id));}catch(e){res.status(400).json({error:e.message});}});
+app.post('/worker/metadata',async(req,res)=>{try{const s=await getState();const ch=s.channels.find(c=>c.channelId===req.body?.channelId);if(!ch)throw new Error('Kanal topilmadi');res.json(await generateMetadata({songName:req.body?.songName||'Track',channel:ch,settings:s.settings}));}catch(e){res.status(400).json({error:e.message});}});
 
-app.get('/api/session', (req, res) => res.json({ authenticated: panelAuth.isAuthenticated(req), authRequired: panelAuth.enabled() }));
-app.post('/api/login', panelAuth.login);
-app.post('/api/logout', (req, res) => { panelAuth.clearCookie(res, req); res.json({ ok: true }); });
-app.use('/api', panelAuth.requireApi);
+app.get('/auth/google',panelAuth.requirePage,(_req,res)=>{try{res.redirect(createAuthUrl().url);}catch(e){res.redirect(`/?oauth=error&message=${encodeURIComponent(e.message)}`);}});
+app.get('/auth/google/callback',async(req,res)=>{try{await handleCallback({code:req.query.code,state:req.query.state});res.redirect('/#channels?oauth=connected');}catch(e){res.redirect(`/#channels?oauth=error&message=${encodeURIComponent(e.message)}`);}});
+app.use('/api',panelAuth.requireApi);
 
-app.get('/api/status', async (_req, res) => {
-  const state = await getState();
-  const publicChannels = state.channels.map(({ oauthEncrypted, ...c }) => ({ ...c, connected: Boolean(oauthEncrypted) }));
-  const tz = state.settings.timezone;
-  res.json({
-    settings: state.settings, channels: publicChannels, jobs: state.jobs.slice(-120).reverse(), logs: state.logs.slice(-150).reverse(),
-    queue: queue.snapshot(), scheduler: state.scheduler,
-    time: { timezone: tz, serverUtc: new Date().toISOString(), localKey: localDateTimeKey(new Date(), tz), localDisplay: localDisplay(new Date(), tz), startedAt: STARTED_AT.toISOString(), uptimeSeconds: Math.round(process.uptime()) },
-    remote: { authEnabled: panelAuth.enabled(), host: HOST, port: PORT, localAddresses: localAddresses(PORT), publicUrl: process.env.APP_URL || '' },
-    env: { googleReady: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET), geminiReady: Boolean(process.env.GEMINI_API_KEY), geminiModel: process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite', ollamaModel: process.env.OLLAMA_MODEL || 'qwen2.5:1.5b', ffmpegPath, ffprobePath, stateStorage: process.env.DATABASE_URL ? 'postgres' : 'file', cloudMode: process.env.CLOUD_MODE === '1' }
-  });
-});
+app.get('/api/status',async(_req,res)=>{const state=await getState();const publicChannels=state.channels.map(({oauthEncrypted,...c})=>({...c,connected:Boolean(oauthEncrypted),analyticsScope:Array.isArray(c.oauthScopes)&&c.oauthScopes.includes('https://www.googleapis.com/auth/yt-analytics.readonly')}));const agents=await agentCloud.snapshot();const tz=state.settings.timezone;res.json({settings:state.settings,channels:publicChannels,jobs:state.jobs.slice(-120).reverse(),logs:state.logs.slice(-150).reverse(),queue:queue.snapshot(),scheduler:state.scheduler,agents:agents.agents,agentCommands:agents.commands,time:{timezone:tz,serverUtc:new Date().toISOString(),localKey:localDateTimeKey(new Date(),tz),localDisplay:localDisplay(new Date(),tz),startedAt:STARTED_AT.toISOString(),uptimeSeconds:Math.round(process.uptime())},remote:{authEnabled:panelAuth.enabled(),host:HOST,port:PORT,localAddresses:localAddresses(PORT),publicUrl:process.env.APP_URL||''},env:{cloudMode:CLOUD_MODE,googleReady:Boolean(process.env.GOOGLE_CLIENT_ID&&process.env.GOOGLE_CLIENT_SECRET),geminiReady:Boolean(process.env.GEMINI_API_KEY),geminiModel:process.env.GEMINI_MODEL||'gemini-3.1-flash-lite',ollamaModel:process.env.OLLAMA_MODEL||'qwen2.5:1.5b',ffmpegPath,ffprobePath,stateStorage:process.env.DATABASE_URL?'postgres':'file',agentReady:agentCloud.configured()}});});
+app.put('/api/settings',async(req,res)=>{try{res.json(await updateSettings(req.body||{}));}catch(e){res.status(400).json({error:e.message});}});
+app.get('/api/analytics',async(req,res)=>{try{const s=await getState();res.json(await analytics.allAnalytics(s.channels,Number(req.query.days||28),req.query.force==='1'));}catch(e){res.status(400).json({error:e.message});}});
+app.get('/api/analytics/:id',async(req,res)=>{try{res.json(await analytics.channelAnalytics(req.params.id,Number(req.query.days||28),req.query.force==='1'));}catch(e){res.status(400).json({error:e.message});}});
+app.get('/api/agent/status',async(_req,res)=>{try{res.json(await agentCloud.snapshot());}catch(e){res.status(400).json({error:e.message});}});
+app.get('/api/agent/pairing',(_req,res)=>res.json({configured:agentCloud.configured(),key:process.env.AGENT_KEY||'',serverUrl:process.env.APP_URL||''}));
+app.post('/api/agent/command',async(req,res)=>{try{res.json(await agentCloud.createCommand(req.body||{}));}catch(e){res.status(400).json({error:e.message});}});
+app.post('/api/agent/command/:id/cancel',async(req,res)=>{try{res.json(await agentCloud.cancel(req.params.id));}catch(e){res.status(400).json({error:e.message});}});
 
-app.put('/api/settings', async (req, res) => { try { res.json(await updateSettings(req.body || {})); } catch (error) { res.status(400).json({ error: error.message }); } });
-app.post('/api/pick-folder', async (req, res) => { try { res.json({ path: await pickFolder(req.body?.title || 'Papka tanlang') }); } catch (error) { res.status(400).json({ error: error.message }); } });
-app.get('/api/scan', async (_req, res) => { try { const state = await getState(); const [clips, songs] = await Promise.all([scanFiles(state.settings.clipDir, VIDEO_EXTENSIONS), scanFiles(state.settings.musicDir, AUDIO_EXTENSIONS)]); res.json({ clips: clips.length, songs: songs.length, clipExamples: clips.slice(0, 5), songExamples: songs.slice(0, 5) }); } catch (error) { res.status(400).json({ error: error.message }); } });
+app.post('/api/pick-folder',async(req,res)=>{if(CLOUD_MODE)return res.status(400).json({error:'Cloud panel qurilma papkasini ko‘ra olmaydi. PC da Local Agent panelidan tanlang.'});try{res.json({path:await pickFolder(req.body?.title||'Papka tanlang')});}catch(e){res.status(400).json({error:e.message});}});
+app.get('/api/scan',async(_req,res)=>{if(CLOUD_MODE)return res.status(400).json({error:'Skanerlash PC Local Agent ichida bajariladi.'});try{const state=await getState();const[clips,songs]=await Promise.all([scanFiles(state.settings.clipDir,VIDEO_EXTENSIONS),scanFiles(state.settings.musicDir,AUDIO_EXTENSIONS)]);res.json({clips:clips.length,songs:songs.length,clipExamples:clips.slice(0,5),songExamples:songs.slice(0,5)});}catch(e){res.status(400).json({error:e.message});}});
+app.patch('/api/channels/:id',async(req,res)=>{try{res.json(await patchChannel(req.params.id,req.body||{}));}catch(e){res.status(400).json({error:e.message});}});app.delete('/api/channels/:id',async(req,res)=>{try{await removeChannel(req.params.id);res.json({ok:true});}catch(e){res.status(400).json({error:e.message});}});app.post('/api/channels/:id/refresh',async(req,res)=>{try{res.json(await refreshChannel(req.params.id));}catch(e){res.status(400).json({error:e.message});}});
 
-app.get('/auth/google', panelAuth.requirePage, (_req, res) => { try { res.redirect(createAuthUrl().url); } catch (error) { res.redirect(`/?oauth=error&message=${encodeURIComponent(error.message)}`); } });
-app.get('/auth/google/callback', async (req, res) => { try { await handleCallback({ code: req.query.code, state: req.query.state }); res.redirect('/?oauth=connected'); } catch (error) { res.redirect(`/?oauth=error&message=${encodeURIComponent(error.message)}`); } });
+app.post('/api/jobs/enqueue',async(req,res)=>{try{const state=await getState();const channel=req.body?.channelId?state.channels.find(c=>c.channelId===req.body.channelId):state.channels.filter(c=>c.enabled).sort((a,b)=>(a.order||0)-(b.order||0))[0];if(!channel)throw new Error('Faol kanal topilmadi');res.json(CLOUD_MODE?await agentCloud.createCommand({channelId:channel.channelId,source:'manual'}):await queue.enqueue(channel.channelId,'manual'));}catch(e){res.status(400).json({error:e.message});}});
+app.post('/api/jobs/schedule',async(req,res)=>{try{if(CLOUD_MODE)return res.json(await agentCloud.createCommand({channelId:req.body?.channelId,scheduledLocal:req.body?.scheduledLocal,source:'planned'}));res.json(await queue.schedule(req.body?.channelId,req.body?.scheduledLocal));}catch(e){res.status(400).json({error:e.message});}});
+app.post('/api/jobs/:id/retry',async(req,res)=>{try{if(CLOUD_MODE){const snap=await agentCloud.snapshot();const old=snap.commands.find(x=>x.id===req.params.id);if(!old)throw new Error('Buyruq topilmadi');return res.json(await agentCloud.createCommand({channelId:old.channelId,source:'retry'}));}res.json(await queue.retry(req.params.id));}catch(e){res.status(400).json({error:e.message});}});
+app.post('/api/jobs/:id/cancel',async(req,res)=>{try{res.json(CLOUD_MODE?await agentCloud.cancel(req.params.id):await queue.cancel(req.params.id));}catch(e){res.status(400).json({error:e.message});}});app.post('/api/scheduler/run-next',async(_req,res)=>{try{res.json({result:await scheduler.tick(true)});}catch(e){res.status(400).json({error:e.message});}});
+app.post('/api/ai/test',async(req,res)=>{try{const state=await getState();const channel=state.channels[0]||{title:'Demo Channel',tags:['music'],titleTemplate:'{song} | Official Music',descriptionTemplate:'{song}\n#music'};const input={songName:req.body?.songName||'Example Song',channel,settings:state.settings};let result;if(state.settings.aiProvider==='gemini')result=await geminiMetadata(input);else if(state.settings.aiProvider==='ollama')result=await ollamaMetadata(input);else result=templateMetadata(input);res.json(result);}catch(e){res.status(400).json({error:e.message});}});
+app.get('/api/doctor',async(_req,res)=>{const state=await getState();const checks=[];checks.push({name:'APP_SECRET',ok:(process.env.APP_SECRET||'').length>=24,detail:'OAuth tokenlarni shifrlash'});checks.push({name:'Panel paroli',ok:panelAuth.enabled()||HOST==='127.0.0.1'||HOST==='localhost',detail:panelAuth.enabled()?'Yoqilgan':'Remote rejimda PANEL_PASSWORD qo‘ying'});checks.push({name:'Google OAuth',ok:Boolean(process.env.GOOGLE_CLIENT_ID&&process.env.GOOGLE_CLIENT_SECRET),detail:'YouTube kanal ulash'});if(CLOUD_MODE){const a=(await agentCloud.snapshot()).agents[0];checks.push({name:'Local Agent',ok:Boolean(a&&Date.now()-Date.parse(a.lastSeenAt)<120000),detail:a?`${a.name} • ${a.lastSeenAt}`:'PC agent hali ulanmagan'});}else{checks.push({name:'Clip papka',ok:Boolean(state.settings.clipDir&&fs.existsSync(state.settings.clipDir)),detail:state.settings.clipDir||'tanlanmagan'});checks.push({name:'Musiqa papka',ok:Boolean(state.settings.musicDir&&fs.existsSync(state.settings.musicDir)),detail:state.settings.musicDir||'tanlanmagan'});}res.json({checks});});
 
-app.patch('/api/channels/:id', async (req, res) => { try { res.json(await patchChannel(req.params.id, req.body || {})); } catch (error) { res.status(400).json({ error: error.message }); } });
-app.delete('/api/channels/:id', async (req, res) => { try { await removeChannel(req.params.id); res.json({ ok: true }); } catch (error) { res.status(400).json({ error: error.message }); } });
-app.post('/api/channels/:id/refresh', async (req, res) => { try { res.json(await refreshChannel(req.params.id)); } catch (error) { res.status(400).json({ error: error.message }); } });
-
-app.post('/api/jobs/enqueue', async (req, res) => { try { const state = await getState(); const channel = req.body?.channelId ? state.channels.find(c => c.channelId === req.body.channelId) : state.channels.filter(c => c.enabled).sort((a, b) => (a.order || 0) - (b.order || 0))[0]; if (!channel) throw new Error('Faol kanal topilmadi'); res.json(await queue.enqueue(channel.channelId, 'manual')); } catch (error) { res.status(400).json({ error: error.message }); } });
-app.post('/api/jobs/schedule', async (req, res) => { try { res.json(await queue.schedule(req.body?.channelId, req.body?.scheduledLocal)); } catch (error) { res.status(400).json({ error: error.message }); } });
-app.post('/api/jobs/:id/retry', async (req, res) => { try { res.json(await queue.retry(req.params.id)); } catch (error) { res.status(400).json({ error: error.message }); } });
-app.post('/api/jobs/:id/cancel', async (req, res) => { try { res.json(await queue.cancel(req.params.id)); } catch (error) { res.status(400).json({ error: error.message }); } });
-app.post('/api/scheduler/run-next', async (_req, res) => { try { res.json({ result: await scheduler.tick(true) }); } catch (error) { res.status(400).json({ error: error.message }); } });
-
-app.post('/api/ai/test', async (req, res) => {
-  try {
-    const state = await getState();
-    const channel = state.channels[0] || { title: 'Demo Channel', tags: ['music'], titleTemplate: '{song} | Official Music', descriptionTemplate: '{song}\n#music' };
-    const input = { songName: req.body?.songName || 'Example Song', channel, settings: state.settings };
-    let result;
-    if (state.settings.aiProvider === 'gemini') result = await geminiMetadata(input); else if (state.settings.aiProvider === 'ollama') result = await ollamaMetadata(input); else result = templateMetadata(input);
-    res.json(result);
-  } catch (error) { res.status(400).json({ error: error.message }); }
-});
-
-app.get('/api/doctor', async (_req, res) => {
-  const state = await getState(); const checks = [];
-  checks.push({ name: 'APP_SECRET', ok: (process.env.APP_SECRET || '').length >= 24, detail: 'OAuth tokenlarni shifrlash uchun' });
-  checks.push({ name: 'Panel paroli', ok: panelAuth.enabled() || HOST === '127.0.0.1' || HOST === 'localhost', detail: panelAuth.enabled() ? 'Yoqilgan' : 'Remote rejimda PANEL_PASSWORD qo‘ying' });
-  checks.push({ name: 'Google OAuth', ok: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET), detail: 'YouTube kanal ulash uchun' });
-  checks.push({ name: 'Clip papka', ok: Boolean(state.settings.clipDir && fs.existsSync(state.settings.clipDir)), detail: state.settings.clipDir || 'tanlanmagan' });
-  checks.push({ name: 'Musiqa papka', ok: Boolean(state.settings.musicDir && fs.existsSync(state.settings.musicDir)), detail: state.settings.musicDir || 'tanlanmagan' });
-  checks.push({ name: 'Output papka', ok: Boolean(state.settings.outputDir), detail: state.settings.outputDir || 'tanlanmagan' });
-  checks.push({ name: 'AI', ok: state.settings.aiProvider === 'template' || (state.settings.aiProvider === 'gemini' ? Boolean(process.env.GEMINI_API_KEY) : true), detail: state.settings.aiProvider });
-  res.json({ checks });
-});
-
-app.use((error, _req, res, _next) => { console.error(error); res.status(500).json({ error: error.message || 'Server xatosi' }); });
-
-function localAddresses(port) {
-  const out = [];
-  for (const list of Object.values(os.networkInterfaces())) for (const item of list || []) if (item.family === 'IPv4' && !item.internal) out.push(`http://${item.address}:${port}`);
-  return out;
-}
-
-awaitStart();
-async function awaitStart() {
-  try {
-    await getState(); await queue.recoverStartup(); scheduler.start(); queue.kick();
-    app.listen(PORT, HOST, () => {
-      console.log(`\nAutoMix YouTube AI: http://localhost:${PORT}`); console.log(`Host: ${HOST} | Scheduler + Recovery active`);
-      if (HOST === '0.0.0.0') console.log('Telefon/LAN:', localAddresses(PORT).join(' | '));
-      addLog('info', `Server ishga tushdi: http://localhost:${PORT} | recovery active`).catch(() => {});
-    });
-  } catch (error) { console.error('START XATO:', error); process.exitCode = 1; }
-}
+app.use((error,_req,res,_next)=>{console.error(error);res.status(500).json({error:error.message||'Server xatosi'});});
+function localAddresses(port){const out=[];for(const list of Object.values(os.networkInterfaces()))for(const item of list||[])if(item.family==='IPv4'&&!item.internal)out.push(`http://${item.address}:${port}`);return out;}
+start();async function start(){try{await getState();await queue.recoverStartup();scheduler.start();queue.kick();app.listen(PORT,HOST,()=>{console.log(`\nAutoMix YouTube AI: http://localhost:${PORT}`);console.log(`Host: ${HOST} | ${CLOUD_MODE?'Cloud control + Local Agent':'Local renderer'} | Scheduler active`);addLog('info',`Server ishga tushdi: http://localhost:${PORT} | ${CLOUD_MODE?'cloud-control':'local'}`).catch(()=>{});});}catch(error){console.error('START XATO:',error);process.exitCode=1;}}
